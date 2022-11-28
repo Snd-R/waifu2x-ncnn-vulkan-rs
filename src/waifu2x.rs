@@ -40,13 +40,23 @@ extern "C" {
 
     fn load(waifu2x: *mut c_void, param_path: *const c_char, model_path: *const c_char);
 
-    fn process(waifu2x: *mut c_void, in_image: *const Image, out_image: *const Image) -> c_int;
+    fn process(
+        waifu2x: *mut c_void,
+        in_image: *const Image,
+        out_image: *const Image,
+        mat_ptr: *mut *mut c_void,
+    ) -> c_int;
 
-    fn process_cpu(waifu2x: *mut c_void, in_image: &Image, out_image: &Image) -> c_int;
+    fn process_cpu(
+        waifu2x: *mut c_void,
+        in_image: &Image,
+        out_image: &Image,
+        mat_ptr: *mut *mut c_void,
+    ) -> c_int;
 
     fn get_heap_budget(gpuid: c_int) -> c_uint;
 
-    fn free_image(image: *const Image);
+    fn free_image(mat_ptr: *mut c_void);
 
     fn free_waifu2x(waifu2x: *mut c_void);
 }
@@ -176,17 +186,23 @@ impl Waifu2x {
 
 
         unsafe {
-            let out_buffer =
+            let (out_buffer, mat_ptr) =
                 if self.scale == 1 {
-                    let output_ptr = std::ptr::null_mut();
+                    let mut mat = std::ptr::null_mut();
                     let out_buffer = Image {
-                        data: output_ptr,
+                        data: std::ptr::null_mut(),
                         w: in_buffer.w,
                         h: in_buffer.h,
                         c: in_buffer.c,
                     };
-                    process(self.waifu2x, &in_buffer as *const Image, &out_buffer as *const Image);
-                    out_buffer
+                    process(
+                        self.waifu2x,
+                        &in_buffer as *const Image,
+                        &out_buffer as *const Image,
+                        &mut mat,
+                    );
+
+                    (out_buffer, mat)
                 } else {
                     let scale_run_count = match self.scale {
                         2 => 1,
@@ -197,36 +213,49 @@ impl Waifu2x {
                         _ => { panic!("unexpected scale number") }
                     };
 
-                    let output_ptr = std::ptr::null_mut();
+                    let mut mat = std::ptr::null_mut();
                     let mut out_buffer = Image {
-                        data: output_ptr,
+                        data: std::ptr::null_mut(),
                         w: in_buffer.w * 2,
                         h: in_buffer.h * 2,
                         c: i32::from(channels),
                     };
-                    process(self.waifu2x, &in_buffer as *const Image, &out_buffer as *const Image);
 
-                    let mut tmp: Image;
+                    process(
+                        self.waifu2x,
+                        &in_buffer as *const Image,
+                        &out_buffer as *const Image,
+                        &mut mat,
+                    );
+
+                    let mut tmp_image;
+                    let mut tmp_mat;
                     for _ in 1..scale_run_count {
-                        println!("scaling inside the loop");
-                        tmp = out_buffer;
+                        tmp_image = out_buffer;
+                        tmp_mat = mat;
 
-                        let output_ptr = std::ptr::null_mut();
                         out_buffer = Image {
-                            data: output_ptr,
-                            w: tmp.w * 2,
-                            h: tmp.h * 2,
-                            c: tmp.c,
+                            data: std::ptr::null_mut(),
+                            w: tmp_image.w * 2,
+                            h: tmp_image.h * 2,
+                            c: tmp_image.c,
                         };
-                        process(self.waifu2x, &tmp as *const Image, &out_buffer as *const Image);
-                        free_image(&tmp as *const Image)
+
+                        process(
+                            self.waifu2x,
+                            &tmp_image as *const Image,
+                            &out_buffer as *const Image,
+                            &mut mat,
+                        );
+
+                        free_image(tmp_mat);
                     }
-                    out_buffer
+                    (out_buffer, mat)
                 };
 
             let length = usize::try_from(out_buffer.h * out_buffer.w * channels as i32).unwrap();
             let copied_bytes = std::slice::from_raw_parts(out_buffer.data as *const u8, length).to_vec();
-            free_image(&out_buffer as *const Image);
+            free_image(mat_ptr);
 
             Self::convert_image(out_buffer.w as u32, out_buffer.h as u32, channels, copied_bytes)
         }
