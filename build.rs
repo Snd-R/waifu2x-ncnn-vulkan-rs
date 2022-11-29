@@ -20,5 +20,7 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", waifu2x.join("lib").display());
     println!("cargo:rustc-link-lib=static:-bundle={}", "waifu2x-ncnn-vulkan-wrapper");
     println!("cargo:rustc-link-lib=dylib=ncnn");
-    println!("cargo:rustc-link-lib=dylib={}", "stdc++");
+    if cfg!(unix) {
+        println!("cargo:rustc-link-lib=dylib={}", "stdc++");
+    }
 }
